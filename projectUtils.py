@@ -46,13 +46,13 @@ def plotWindows(image, windows, colors=None):
         ax.add_patch(rect)
     plt.show()
         
-def imagesDetection(images, H, L, scale, clf, featureExtractor):
+def imagesDetection(images, H, L, scale, clf, featureExtractor, scoreDecision=0):
     detections = np.zeros((1, 5))
     imagesIdx = [] 
     for imIdx in range(images.shape[0]):
         if imIdx%100==0:
             print("analyzing image: %i"%imIdx)
-        imDetections = imageDetection(images[imIdx], H, L, scale, clf, featureExtractor)
+        imDetections = imageDetection(images[imIdx], H, L, scale, clf, featureExtractor, scoreDecision)
         if imDetections is not None:
             nonMaxima = suppNonMaxima(imDetections)
             detections = np.concatenate((detections, nonMaxima))
@@ -62,7 +62,7 @@ def imagesDetection(images, H, L, scale, clf, featureExtractor):
     detections = np.concatenate((imagesIdx, detections), axis=1)    
     return detections
 
-def imageDetection(im, H, L, scale, clf, featureExtractor):
+def imageDetection(im, H, L, scale, clf, featureExtractor, scoreDecision=0):
     maxScale = 0
     for s in scale:
         if im.shape[0]-H*s > 0 and im.shape[1]-L*s > 0:
@@ -77,11 +77,10 @@ def imageDetection(im, H, L, scale, clf, featureExtractor):
         while i < imResized.shape[0]-H:
             while j < imResized.shape[1]-L:
                 features = [featureExtractor(imResized[i:(i+H), j:(j+L)])]
-                c = clf.predict(features)
-                if c == 1:
+                score = clf.decision_function(features)
+                if score > scoreDecision:
                     realI = int(i*s)
                     realJ = int(j*s)
-                    score = clf.decision_function(features)
                     w = np.array([realI, realJ, realH, realL,score], dtype=float)
                     windows = np.concatenate((windows, w.reshape((1,5))))
                 j += 10
@@ -97,7 +96,7 @@ def suppNonMaxima(detections):
     suppIdx = []
     for i in range(n):
         for j in range(i+1,n):
-            if windowRecoveringArea(detections[i,:4], detections[j,:4]) > 0.5:
+            if windowRecoveringArea(detections[i,:4], detections[j,:4]) > 0.25:
                 suppIdx += [j]
     maximaIdx = [(i not in suppIdx) for i in range(n)]
     return detections[maximaIdx]

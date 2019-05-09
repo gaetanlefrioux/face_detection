@@ -44,8 +44,6 @@ def randomNegWindows(image, scale, H, L, posWindows, N):
 
 def extractWindowImages(images, windows, H, L):
     windowsImages = np.zeros((windows.shape[0], H, L))
-    images = np.ascontiguousarray(images)
-    windows = np.ascontiguousarray(windows)
     i = 0
     for w in windows:
         [imIdx, x, y, h, l] = w
@@ -59,7 +57,7 @@ def falsePositifWindows(guessedWins, realWins):
     for gWin in guessedWins:
         isFalsePos = True
         for rWin in realWins[realWins[:,0]==gWin[0]]:
-            if windowRecoveringArea(rWin[1:5], gWin[1:5]) > 0.5:
+            if windowRecoveringArea(rWin[1:5], gWin[1:5]) > 0.6:
                 isFalsePos = False
                 break
         if isFalsePos:
@@ -80,7 +78,7 @@ def getPosImages(trainImages, posWindows, H, L):
         trainPosImages += [im[:,::-1]]
 
         #ajout de rotation petit angle
-        theta = 10
+        theta = 15
         
         # Rotation de rectangle pythagore trigo tout ça ...
         # permet d'avoir une image sans zone noir sans pixel en dehors de l'image originale
@@ -109,13 +107,6 @@ def getPosImages(trainImages, posWindows, H, L):
         i+=1
     return np.array(trainPosImages)
     
-def randomSamples(data, n):
-    indices = sample(range(data.shape[0]), data.shape[0])
-    slices = []
-    for i in range(n):
-        slices += [indices[int(i*len(indices)/n):int((i+1)*len(indices)/n)]]
-    return np.array(slices)
-    
 def saveModel(clf, file):
     with open(file, 'wb') as file:  
         pickle.dump(clf, file)
@@ -123,10 +114,11 @@ def saveModel(clf, file):
 if __name__ == "__main__":
     H = 90
     L = 60
-    scale = np.arange(0.7, 4, 0.3)
+    randomNegScale = np.arange(0.7, 4, 0.3)
+    detectionScale = np.arange(0.5, 6, 0.3)
     negPerImage = 16
     
-    modelFile = "model.pkl"                                                                                                                                                                                     
+    modelFile = "model.pkl"                                                                                                                                                                                
     if len(sys.argv)>1:
         modelFile = sys.argv[1]
         
@@ -152,7 +144,7 @@ if __name__ == "__main__":
     negFeatures = np.zeros((images.shape[0]*negPerImage, 3645), dtype=float)
     negFeaturesIdx = 0
     for imIdx in range(images.shape[0]):
-        [negWin, negSubImage] = randomNegWindows(images[imIdx], scale, H, L, posWindows[posWindows[:,0]==imIdx,1:], negPerImage)
+        [negWin, negSubImage] = randomNegWindows(images[imIdx], randomNegScale, H, L, posWindows[posWindows[:,0]==imIdx,1:], negPerImage)
         for im in negSubImage:
             negFeatures[negFeaturesIdx] = featureExtractor(im)
             negFeaturesIdx += 1
@@ -166,27 +158,16 @@ if __name__ == "__main__":
 
     print("1st model training with cross-validation")
 
-    cValues = [0.1, 1, 10, 100]
-    errors = []
-    for c in cValues:
-        print("Computing for C = %f"%c)
-        clf = SVC(C=c, kernel="linear")
-        slices = randomSamples(features, 5)
-        e = 0
-        for s in slices:
-            idx = np.concatenate(list(filter(lambda x: x is not s, slices)))
-            tX = features[idx,:]
-            tY = labels[idx]
-            clf.fit(tX, tY)
-            e += np.mean(clf.predict(features[s,:]) != labels[s])
-        errors += [e/5]
-
-    cIdx = np.argmax(np.array(errors))
-    clf = SVC(C=cValues[cIdx], kernel="linear")
+    paramGrid = {
+        'C': [1e3, 5e3, 1e4, 5e4, 1e5],
+        'gamma': [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.1]
+    }
+    clf = SVC(kernel="rbf")
+    clf = GridSearchCV(clf, paramGrid, scoring="balanced_accuracy", cv=5)
     clf.fit(features,labels)
     
     print("Evaluating 1st model on train images")
-    detections = imagesDetection(images, H, L, scale, clf, featureExtractor)
+    detections = imagesDetection(images, H, L, detectionScale, clf, featureExtractor)
     
     print("Extracting false positive features")
     falsePosWin = falsePositifWindows(detections, posWindows)
@@ -198,8 +179,7 @@ if __name__ == "__main__":
         labels = np.concatenate((labels, np.array([-1])))
     
     print("Re-training model with %i false positif features added"%falsePosImages.shape[0])
-    clf2 = SVC(C=cValues[cIdx], kernel="linear")
+    clf2 = SVC(kernel="rbf", gamma=clf.best_prams_["gamma"], C=clf.best_prams_["C"])
     clf2.fit(features, labels)
-    
     print("Saving model to file %s"%modelFile)
     saveModel(clf2, modelFile)
